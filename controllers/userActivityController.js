@@ -28,8 +28,6 @@ exports.getAllActivities = async (req, res) => {
   }
 };
 
-const pool = require("../config/db");
-
 // Get all activities
 exports.getAllActivities = async (req, res) => {
   try {
