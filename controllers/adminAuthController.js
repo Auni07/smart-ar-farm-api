@@ -6,48 +6,59 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // Check admin account
     const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
+      "SELECT * FROM admins WHERE email = $1",
       [email]
     );
 
+    // Admin email not found
     if (result.rows.length === 0) {
-      return res.status(400).json({ error: "User not found" });
+      return res.status(404).json({
+        error:
+          "You don't have an admin record. Please contact smartarfarmexplorer@gmail.com for access.",
+      });
     }
 
-    const user = result.rows[0];
+    const admin = result.rows[0];
 
-    const isMatch = await bcrypt.compare(password, user.password_hash);
+    // Check password
+    const isMatch = await bcrypt.compare(
+      password,
+      admin.password_hash
+    );
 
     if (!isMatch) {
-      return res.status(400).json({ error: "Invalid password" });
+      return res.status(400).json({
+        error: "Invalid password",
+      });
     }
 
-    if (user.role !== "admin") {
-      return res.status(403).json({ error: "Access denied" });
-    }
-
+    // Create JWT token
     const token = jwt.sign(
       {
-        id: user.id,
-        email: user.email,
-        role: user.role
+        id: admin.id,
+        email: admin.email,
       },
       process.env.JWT_SECRET || "smart_ar_secret_key",
       { expiresIn: "1h" }
     );
 
-    res.json({
-      message: "Login successful",
-      token,
-      admin: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role
-      }
+    res.cookie("access_token", token, {
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax",
+        maxAge: 60 * 60 * 1000,
     });
 
+    res.json({
+        message: "Login successful",
+        admin: {
+            id: admin.id,
+            username: admin.username,
+            email: admin.email,
+        },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -63,26 +74,28 @@ exports.addNewAdmin = async (req, res) => {
       });
     }
 
-    // check if email already exists
-    const existingUser = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
+    // Check if email already exists in admins table
+    const existingAdmin = await pool.query(
+      "SELECT * FROM admins WHERE email = $1",
       [email]
     );
 
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: "Email already exists" });
+    if (existingAdmin.rows.length > 0) {
+      return res.status(400).json({
+        error: "Email already exists",
+      });
     }
 
-    // hash password
+    // Hash password
     const saltRounds = 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    // insert admin
+    // Insert new admin
     const result = await pool.query(
       `
-      INSERT INTO users (username, email, password_hash, role)
-      VALUES ($1, $2, $3, 'admin')
-      RETURNING id, username, email, role
+      INSERT INTO admins (username, email, password_hash)
+      VALUES ($1, $2, $3)
+      RETURNING id, username, email
       `,
       [username, email, passwordHash]
     );
@@ -93,5 +106,39 @@ exports.addNewAdmin = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+exports.logout = async (req, res) => {
+  try {
+    res.clearCookie("access_token", {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+    });
+
+    res.json({
+      message: "Logout successful",
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+};
+
+exports.me = async (req, res) => {
+  try {
+    res.json({
+      authenticated: true,
+      admin: {
+        id: req.admin.id,
+        email: req.admin.email,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message,
+    });
   }
 };
