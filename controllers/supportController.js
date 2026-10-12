@@ -26,6 +26,38 @@ exports.getAllFaqs = async (req, res) => {
   }
 };
 
+exports.getAllReports = async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        r.id,
+        r.user_id,
+        u.username,
+        u.email,
+        r.report_type,
+        r.description,
+        r.status,
+        r.created_at
+      FROM report r
+      INNER JOIN users u
+        ON r.user_id = u.id
+      ORDER BY r.created_at DESC
+    `);
+
+    res.json({
+      total: result.rowCount,
+      reports: result.rows,
+    });
+
+  } catch (err) {
+    console.error("Get all reports error:", err);
+
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+};
+
 exports.createReport = async (req, res) => {
   try {
     const {

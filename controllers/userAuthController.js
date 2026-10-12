@@ -12,23 +12,32 @@ const transporter = nodemailer.createTransport({
 });
 
 exports.register = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const { username, email, password, birth_year } = req.body;
 
-    const existingUser = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
+    await client.query("BEGIN");
+
+    // Check if email already exists
+    const existingUser = await client.query(
+      "SELECT id FROM users WHERE email = $1",
       [email]
     );
 
     if (existingUser.rows.length > 0) {
+      await client.query("ROLLBACK");
+
       return res.status(400).json({
         error: "Email already exists",
       });
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const result = await pool.query(
+    // Create user
+    const result = await client.query(
       `INSERT INTO users 
        (username, email, password_hash, birth_year)
        VALUES ($1, $2, $3, $4)
@@ -36,15 +45,50 @@ exports.register = async (req, res) => {
       [username, email, hashedPassword, birth_year]
     );
 
+    const newUser = result.rows[0];
+
+    // Add Account Creation achievement progress
+    await client.query(
+      `
+      INSERT INTO achievement_progress (
+        user_id,
+        achievement_id,
+        current_value,
+        updated_at
+      )
+      SELECT
+        $1,
+        id,
+        1,
+        NOW()
+      FROM achievements
+      WHERE achievement_key = 'account_creation'
+      ON CONFLICT (user_id, achievement_id)
+      DO UPDATE SET
+        current_value = EXCLUDED.current_value,
+        updated_at = NOW()
+      `,
+      [newUser.id]
+    );
+
+    await client.query("COMMIT");
+
     res.status(201).json({
       message: "User registered successfully",
-      user: result.rows[0],
+      user: newUser,
     });
 
   } catch (err) {
+    await client.query("ROLLBACK");
+
+    console.error("Registration error:", err);
+
     res.status(500).json({
       error: err.message,
     });
+
+  } finally {
+    client.release();
   }
 };
 

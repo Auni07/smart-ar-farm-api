@@ -3,6 +3,7 @@ const router = express.Router();
 const supportController = require("../controllers/supportController");
 
 router.get("/faq", supportController.getAllFaqs);
+router.get("/reports", supportController.getAllReports);
 router.post("/report", supportController.createReport);
 router.get("/policy", supportController.getPrivacyPolicy);
 router.get("/terms", supportController.getTermsOfService);

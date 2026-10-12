@@ -5,13 +5,17 @@ const cookieParser = require("cookie-parser");
 require("dotenv").config();
 
 const authRoutes = require("./routes/userAuthRoutes");
-const adminRoutes = require("./routes/adminAuthRoutes");
+const adminAuthRoutes = require("./routes/adminAuthRoutes");
+const adminDashboardRoutes = require("./routes/adminDashboardRoutes");
 const plantRoutes = require("./routes/plantRoutes");
 const contentRoutes = require("./routes/contentRoutes");
 const profileRoutes = require("./routes/profileRoutes");
+const achievementRoutes = require("./routes/achievementRoutes");
 const userActivityRoutes = require("./routes/userActivityRoutes");
+const quizRoutes = require("./routes/quizRoutes");
 const plantCareRoutes = require("./routes/plantCareRoutes");
 const agroGuideChatRoutes = require("./routes/agroGuideChatRoutes");
+const mapRoutes = require("./routes/mapRoutes");
 const supportRoutes = require("./routes/supportRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 
@@ -34,13 +38,17 @@ app.get("/reset-password", (req, res) => {
 });
 
 app.use("/auth", authRoutes);
-app.use("/admin", adminRoutes);
+app.use("/admin", adminAuthRoutes);
+app.use("/admin/dashboard", adminDashboardRoutes);
 app.use("/plants", plantRoutes);
 app.use("/content", contentRoutes);
 app.use("/profile", profileRoutes);
+app.use("/achievements", achievementRoutes);
 app.use("/activity", userActivityRoutes);
-app.use("/plant-care", plantCareRoutes);
+app.use("/quiz", quizRoutes);
+app.use("/plant/care", plantCareRoutes);
 app.use("/agroguide", agroGuideChatRoutes);
+app.use("/map", mapRoutes);
 app.use("/support", supportRoutes);
 app.use("/notifications", notificationRoutes);
 

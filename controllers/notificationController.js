@@ -20,6 +20,57 @@ exports.getUserNotifications = async (req, res) => {
   }
 };
 
+// Mark notification as read
+exports.markAsRead = async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+
+    const result = await pool.query(
+      `UPDATE notifications
+       SET is_read = TRUE
+       WHERE id = $1
+       RETURNING *`,
+      [notificationId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Notification not found"
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error marking notification as read:", error);
+    res.status(500).json({
+      error: "Failed to mark notification as read"
+    });
+  }
+};
+
+exports.getAllUniqueNotifications = async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT DISTINCT ON (title, message, type)
+        id,
+        title,
+        message,
+        type,
+        created_at
+      FROM notifications
+      ORDER BY title, message, type, created_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching unique notifications:", error);
+
+    res.status(500).json({
+      error: "Failed to fetch unique notifications"
+    });
+  }
+};
+
 // Create notification for a specific user
 exports.createNotification = async (req, res) => {
   try {
@@ -51,8 +102,7 @@ exports.createNotification = async (req, res) => {
   }
 };
 
-// Create notification for all current users
-exports.createNotificationForAllUsers = async (req, res) => {
+exports.createNotificationToAllUsers = async (req, res) => {
   try {
     const { title, message, type } = req.body;
 
@@ -63,11 +113,17 @@ exports.createNotificationForAllUsers = async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO notifications
-       (user_id, title, message, type)
-       SELECT id, $1, $2, $3
-       FROM users
-       RETURNING *`,
+      `
+      INSERT INTO notifications
+        (user_id, title, message, type)
+      SELECT
+        id,
+        $1,
+        $2,
+        $3
+      FROM users
+      RETURNING *
+      `,
       [
         title,
         message,
@@ -76,47 +132,70 @@ exports.createNotificationForAllUsers = async (req, res) => {
     );
 
     res.status(201).json({
-      message: "Notification sent to all users",
-      count: result.rows.length,
-      notifications: result.rows
+      message: "Notification pushed to all users",
+      count: result.rows.length
     });
 
   } catch (error) {
-    console.error("Error creating notification for all users:", error);
+    console.error(
+      "Error pushing notification to all users:",
+      error
+    );
 
     res.status(500).json({
-      error: "Failed to create notification for all users"
+      error: "Failed to push notification to all users"
     });
   }
 };
 
-// Mark notification as read
-exports.markAsRead = async (req, res) => {
+exports.createNotificationToNewUsers = async (req, res) => {
   try {
-    const { notificationId } = req.params;
+    const { title, message, type } = req.body;
 
-    const result = await pool.query(
-      `UPDATE notifications
-       SET is_read = TRUE
-       WHERE id = $1
-       RETURNING *`,
-      [notificationId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Notification not found"
+    if (!title || !message) {
+      return res.status(400).json({
+        error: "title and message are required"
       });
     }
 
-    res.json(result.rows[0]);
+    const result = await pool.query(
+      `
+      INSERT INTO notifications
+        (user_id, title, message, type)
+      SELECT
+        id,
+        $1,
+        $2,
+        $3
+      FROM users
+      WHERE created_at >= NOW() - INTERVAL '7 days'
+      RETURNING *
+      `,
+      [
+        title,
+        message,
+        type || "general"
+      ]
+    );
+
+    res.status(201).json({
+      message: "Notification pushed to users who joined within the last 7 days",
+      count: result.rows.length
+    });
+
   } catch (error) {
-    console.error("Error marking notification as read:", error);
+    console.error(
+      "Error pushing notification to new users:",
+      error
+    );
+
     res.status(500).json({
-      error: "Failed to mark notification as read"
+      error: "Failed to push notification to new users"
     });
   }
 };
+
+
 
 // Delete notification
 exports.deleteNotification = async (req, res) => {
