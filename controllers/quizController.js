@@ -35,7 +35,10 @@ exports.getQuizSets = async (req, res) => {
         qs.description,
 
         -- Always display /5 on the main quiz screen
-        5 AS display_question_count,
+        CASE
+          WHEN qs.quiz_type = 'plant_specific' THEN 10
+          ELSE 5
+        END AS display_question_count,
 
         -- Check whether user has completed this quiz before
         CASE
@@ -154,7 +157,10 @@ exports.getAllQuizSets = async (req, res) => {
         qs.description,
 
         -- Always display /5 on the main quiz screen
-        5 AS display_question_count,
+        CASE
+          WHEN qs.quiz_type = 'plant_specific' THEN 10
+          ELSE 5
+        END AS display_question_count,
 
         -- Check whether user has completed this quiz before
         CASE

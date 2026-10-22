@@ -720,92 +720,134 @@ exports.getAllActivities = async (req, res) => {
 // GET /admin/dashboard/quiz
 exports.getQuizDashboard = async (req, res) => {
   try {
-
     // Overview
     const overviewResult = await pool.query(`
+      WITH quiz_stats AS (
+        SELECT
+          COUNT(*)::int AS total_quizzes,
+          COUNT(*) FILTER (
+            WHERE is_active = TRUE
+          )::int AS active_quizzes
+        FROM quiz_sets
+      ),
+      attempt_stats AS (
+        SELECT
+          COUNT(*)::int AS total_attempts,
+          COUNT(*) FILTER (
+            WHERE completed_at IS NOT NULL
+          )::int AS completed_attempts,
+          COUNT(DISTINCT user_id)::int AS unique_users,
+          COUNT(*) FILTER (
+            WHERE completed_at IS NOT NULL
+              AND score = total_questions
+          )::int AS perfect_attempts,
+          COUNT(*) FILTER (
+            WHERE completed_at IS NOT NULL
+              AND total_questions > 0
+              AND score >= CEIL(total_questions * 0.6)
+          )::int AS passed_attempts
+        FROM quiz_attempts
+      ),
+      answer_stats AS (
+        SELECT
+          COUNT(*)::int AS total_answers,
+          COUNT(*) FILTER (
+            WHERE is_correct = TRUE
+          )::int AS correct_answers,
+          COUNT(*) FILTER (
+            WHERE is_correct = FALSE
+          )::int AS incorrect_answers
+        FROM quiz_answers
+      )
       SELECT
-        COUNT(DISTINCT qs.id)::int AS total_quizzes,
-
-        COUNT(DISTINCT CASE
-          WHEN qs.is_active = TRUE THEN qs.id
-        END)::int AS active_quizzes,
-
-        COUNT(qa.id)::int AS total_attempts,
-
-        COUNT(CASE
-          WHEN qa.completed_at IS NOT NULL THEN 1
-        END)::int AS completed_attempts,
-
-        COUNT(qans.id)::int AS total_answers,
-
-        COUNT(CASE
-          WHEN qans.is_correct = TRUE THEN 1
-        END)::int AS correct_answers,
-
-        COUNT(CASE
-          WHEN qans.is_correct = FALSE THEN 1
-        END)::int AS incorrect_answers,
-
-        COUNT(DISTINCT qa.user_id)::int AS unique_users,
-
-        COUNT(CASE
-          WHEN qa.completed_at IS NOT NULL
-            AND qa.score = qa.total_questions
-          THEN 1
-        END)::int AS perfect_attempts,
-
-        COUNT(CASE
-          WHEN qa.completed_at IS NOT NULL
-            AND qa.total_questions > 0
-            AND qa.score >= CEIL(qa.total_questions * 0.6)
-          THEN 1
-        END)::int AS passed_attempts
-
-      FROM quiz_sets qs
-
-      LEFT JOIN quiz_attempts qa
-        ON qa.quiz_set_id = qs.id
-
-      LEFT JOIN quiz_answers qans
-        ON qans.attempt_id = qa.id
+        q.total_quizzes,
+        q.active_quizzes,
+        a.total_attempts,
+        a.completed_attempts,
+        a.unique_users,
+        a.perfect_attempts,
+        a.passed_attempts,
+        ans.total_answers,
+        ans.correct_answers,
+        ans.incorrect_answers
+      FROM quiz_stats q
+      CROSS JOIN attempt_stats a
+      CROSS JOIN answer_stats ans
     `);
 
-    const overview = overviewResult.rows[0];
+    const overviewRow = overviewResult.rows[0];
 
-    const overallAccuracy =
-      Number(overview.total_answers) > 0
-        ? (
-            (Number(overview.correct_answers) /
-              Number(overview.total_answers)) *
-            100
-          ).toFixed(1)
-        : "0.0";
+    const totalAnswers = Number(overviewRow.total_answers);
+    const correctAnswers = Number(overviewRow.correct_answers);
 
-    overview.overall_accuracy = Number(overallAccuracy);
+    const overview = {
+      total_quizzes: Number(overviewRow.total_quizzes),
+      active_quizzes: Number(overviewRow.active_quizzes),
 
+      total_attempts: Number(overviewRow.total_attempts),
+      completed_attempts: Number(overviewRow.completed_attempts),
 
-    // Category statistics
+      total_answers: totalAnswers,
+      correct_answers: correctAnswers,
+      incorrect_answers: Number(overviewRow.incorrect_answers),
+
+      overall_accuracy:
+        totalAnswers > 0
+          ? Number(
+              ((correctAnswers / totalAnswers) * 100).toFixed(1)
+            )
+          : 0,
+
+      unique_users: Number(overviewRow.unique_users),
+      perfect_attempts: Number(overviewRow.perfect_attempts),
+      passed_attempts: Number(overviewRow.passed_attempts),
+
+      pass_rate:
+        Number(overviewRow.completed_attempts) > 0
+          ? Number(
+              (
+                (Number(overviewRow.passed_attempts) /
+                  Number(overviewRow.completed_attempts)) *
+                100
+              ).toFixed(1)
+            )
+          : 0,
+    };
+
+    // Category Statistics
     const categoryResult = await pool.query(`
-      SELECT
-        qs.quiz_type,
+      WITH quiz_categories AS (
+        SELECT
+          qs.quiz_type,
+          COUNT(*)::int AS quiz_count
+        FROM quiz_sets qs
+        WHERE qs.quiz_type IN ('general', 'plant_specific')
+        GROUP BY qs.quiz_type
+      ),
+      attempt_categories AS (
+        SELECT
+          qs.quiz_type,
 
-        COUNT(DISTINCT qs.id)::int AS quiz_count,
+          COUNT(qa.id)::int AS attempts,
 
-        COUNT(qa.id)::int AS attempts,
+          COUNT(qa.id) FILTER (
+            WHERE qa.completed_at IS NOT NULL
+          )::int AS completed_attempts,
 
-        COUNT(CASE
-          WHEN qa.completed_at IS NOT NULL THEN 1
-        END)::int AS completed_attempts,
+          COUNT(DISTINCT qa.user_id)::int AS unique_users,
 
-        COUNT(DISTINCT qa.user_id)::int AS unique_users,
+          COALESCE(
+            AVG(
+              CASE
+                WHEN qa.completed_at IS NOT NULL
+                  AND qa.total_questions > 0
+                THEN qa.score::numeric
+                     / qa.total_questions * 100
+              END
+            ),
+            0
+          ) AS accuracy,
 
-        COUNT(qans.id)::int AS total_answers,
-
-        COUNT(CASE
-          WHEN qans.is_correct = TRUE THEN 1
-        END)::int AS correct_answers,
-
-        ROUND(
           COALESCE(
             AVG(
               CASE
@@ -814,81 +856,296 @@ exports.getQuizDashboard = async (req, res) => {
               END
             ),
             0
-          ),
-          2
-        ) AS average_score,
+          ) AS average_score,
 
-        COUNT(CASE
-          WHEN qa.completed_at IS NOT NULL
-            AND qa.score = qa.total_questions
-          THEN 1
-        END)::int AS perfect_attempts,
+          COUNT(qa.id) FILTER (
+            WHERE qa.completed_at IS NOT NULL
+              AND qa.score = qa.total_questions
+          )::int AS perfect_attempts,
 
-        COUNT(CASE
-          WHEN qa.completed_at IS NOT NULL
-            AND qa.total_questions > 0
-            AND qa.score >= CEIL(qa.total_questions * 0.6)
-          THEN 1
-        END)::int AS passed_attempts
+          COUNT(qa.id) FILTER (
+            WHERE qa.completed_at IS NOT NULL
+              AND qa.total_questions > 0
+              AND qa.score >= CEIL(qa.total_questions * 0.6)
+          )::int AS passed_attempts
 
-      FROM quiz_sets qs
+        FROM quiz_sets qs
 
-      LEFT JOIN quiz_attempts qa
-        ON qa.quiz_set_id = qs.id
+        LEFT JOIN quiz_attempts qa
+          ON qa.quiz_set_id = qs.id
 
-      LEFT JOIN quiz_answers qans
-        ON qans.attempt_id = qa.id
+        WHERE qs.quiz_type IN ('general', 'plant_specific')
 
-      GROUP BY qs.quiz_type
+        GROUP BY qs.quiz_type
+      ),
+      answer_categories AS (
+        SELECT
+          qs.quiz_type,
+          COUNT(qans.id)::int AS total_answers,
+          COUNT(qans.id) FILTER (
+            WHERE qans.is_correct = TRUE
+          )::int AS correct_answers
+        FROM quiz_sets qs
 
-      ORDER BY
-        CASE qs.quiz_type
-          WHEN 'general' THEN 1
-          WHEN 'plant_specific' THEN 2
-          WHEN 'ar_experience' THEN 3
-          ELSE 4
-        END
+        LEFT JOIN quiz_attempts qa
+          ON qa.quiz_set_id = qs.id
+
+        LEFT JOIN quiz_answers qans
+          ON qans.attempt_id = qa.id
+
+        WHERE qs.quiz_type IN ('general', 'plant_specific')
+
+        GROUP BY qs.quiz_type
+      )
+      SELECT
+        qc.quiz_type,
+        qc.quiz_count,
+        COALESCE(ac.attempts, 0)::int AS attempts,
+        COALESCE(ac.completed_attempts, 0)::int
+          AS completed_attempts,
+        COALESCE(ac.unique_users, 0)::int AS unique_users,
+        COALESCE(ans.total_answers, 0)::int AS total_answers,
+        COALESCE(ans.correct_answers, 0)::int AS correct_answers,
+        COALESCE(ac.accuracy, 0) AS accuracy,
+        COALESCE(ac.average_score, 0) AS average_score,
+        COALESCE(ac.perfect_attempts, 0)::int AS perfect_attempts,
+        COALESCE(ac.passed_attempts, 0)::int AS passed_attempts
+      FROM quiz_categories qc
+
+      LEFT JOIN attempt_categories ac
+        ON ac.quiz_type = qc.quiz_type
+
+      LEFT JOIN answer_categories ans
+        ON ans.quiz_type = qc.quiz_type
     `);
 
-    const categories = categoryResult.rows.map((row) => ({
-      quiz_type: row.quiz_type,
-      quiz_count: Number(row.quiz_count),
-      attempts: Number(row.attempts),
-      completed_attempts: Number(row.completed_attempts),
-      unique_users: Number(row.unique_users),
-      total_answers: Number(row.total_answers),
-      correct_answers: Number(row.correct_answers),
+    const categories = categoryResult.rows.map((row) => {
+      const answers = Number(row.total_answers);
+      const correct = Number(row.correct_answers);
+      const completed = Number(row.completed_attempts);
 
-      accuracy:
-        Number(row.total_answers) > 0
-          ? Number(
-              (
-                (Number(row.correct_answers) /
-                  Number(row.total_answers)) *
-                100
-              ).toFixed(1)
-            )
-          : 0,
+      return {
+        quiz_type: row.quiz_type,
+        quiz_count: Number(row.quiz_count),
 
-      average_score: Number(row.average_score),
+        attempts: Number(row.attempts),
+        completed_attempts: completed,
+        unique_users: Number(row.unique_users),
+
+        accuracy: Number(Number(row.accuracy).toFixed(1)),
+
+        average_score: Number(
+          Number(row.average_score).toFixed(2)
+        ),
+
+        pass_rate:
+          completed > 0
+            ? Number(
+                (
+                  (Number(row.passed_attempts) / completed) *
+                  100
+                ).toFixed(1)
+              )
+            : 0,
+
+        perfect_attempts: Number(row.perfect_attempts),
+
+        total_answers: answers,
+        correct_answers: correct,
+
+        answer_accuracy:
+          answers > 0
+            ? Number(((correct / answers) * 100).toFixed(1))
+            : 0,
+      };
+    });
+
+    // AR Experience category
+    const arCategoryResult = await pool.query(`
+      SELECT
+        COUNT(DISTINCT s.id)::int AS quiz_count,
+
+        COUNT(a.id)::int AS attempts,
+
+        COUNT(a.id) FILTER (
+          WHERE a.completed_at IS NOT NULL
+        )::int AS completed_attempts,
+
+        COUNT(DISTINCT a.user_id)::int AS unique_users,
+
+        COALESCE(
+          AVG(
+            CASE
+              WHEN a.completed_at IS NOT NULL
+                AND a.total_questions > 0
+              THEN a.score::numeric
+                   / a.total_questions * 100
+            END
+          ),
+          0
+        ) AS accuracy,
+
+        COALESCE(
+          AVG(
+            CASE
+              WHEN a.completed_at IS NOT NULL
+              THEN a.score
+            END
+          ),
+          0
+        ) AS average_score,
+
+        COUNT(a.id) FILTER (
+          WHERE a.completed_at IS NOT NULL
+            AND a.score = a.total_questions
+        )::int AS perfect_attempts,
+
+        COUNT(a.id) FILTER (
+          WHERE a.completed_at IS NOT NULL
+            AND a.total_questions > 0
+            AND a.score >= CEIL(a.total_questions * 0.7)
+        )::int AS passed_attempts,
+
+        COALESCE(
+          SUM(
+            CASE
+              WHEN a.completed_at IS NOT NULL
+              THEN a.total_questions
+              ELSE 0
+            END
+          ),
+          0
+        )::int AS total_answers_proxy,
+
+        COALESCE(
+          SUM(
+            CASE
+              WHEN a.completed_at IS NOT NULL
+              THEN a.score
+              ELSE 0
+            END
+          ),
+          0
+        )::int AS correct_answers_proxy
+
+      FROM ar_quiz_sessions s
+
+      LEFT JOIN ar_quiz_attempts a
+        ON a.ar_quiz_session_id = s.id
+    `);
+
+    const arRow = arCategoryResult.rows[0];
+
+    const arTotalAnswers = Number(arRow.total_answers_proxy);
+    const arCorrectAnswers = Number(arRow.correct_answers_proxy);
+    const arCompleted = Number(arRow.completed_attempts);
+
+    categories.push({
+      quiz_type: "ar_experience",
+
+      // Number of generated AR quiz sessions.
+      quiz_count: Number(arRow.quiz_count),
+
+      attempts: Number(arRow.attempts),
+      completed_attempts: arCompleted,
+      unique_users: Number(arRow.unique_users),
+
+      accuracy: Number(Number(arRow.accuracy).toFixed(1)),
+
+      average_score: Number(
+        Number(arRow.average_score).toFixed(2)
+      ),
 
       pass_rate:
-        Number(row.completed_attempts) > 0
+        arCompleted > 0
           ? Number(
               (
-                (Number(row.passed_attempts) /
-                  Number(row.completed_attempts)) *
+                (Number(arRow.passed_attempts) / arCompleted) *
                 100
               ).toFixed(1)
             )
           : 0,
 
-      perfect_attempts: Number(row.perfect_attempts),
-    }));
+      perfect_attempts: Number(arRow.perfect_attempts),
+
+      // These are estimates from completed attempt scores,
+      // not actual records from an AR answer table.
+      total_answers: arTotalAnswers,
+      correct_answers: arCorrectAnswers,
+
+      answer_accuracy:
+        arTotalAnswers > 0
+          ? Number(
+              ((arCorrectAnswers / arTotalAnswers) * 100).toFixed(1)
+            )
+          : 0,
+    });
+
+    // Keep the category order consistent.
+    const categoryOrder = {
+      general: 1,
+      plant_specific: 2,
+      ar_experience: 3,
+    };
+
+    categories.sort(
+      (a, b) =>
+        categoryOrder[a.quiz_type] - categoryOrder[b.quiz_type]
+    );
 
 
-    // Each quiz statistics
+    // Individual Quiz
     const quizzesResult = await pool.query(`
+      WITH attempt_stats AS (
+        SELECT
+          qa.quiz_set_id,
+
+          COUNT(*)::int AS attempts,
+
+          COUNT(*) FILTER (
+            WHERE qa.completed_at IS NOT NULL
+          )::int AS completed_attempts,
+
+          COUNT(DISTINCT qa.user_id)::int AS unique_users,
+
+          COALESCE(
+            AVG(
+              CASE
+                WHEN qa.completed_at IS NOT NULL
+                THEN qa.score
+              END
+            ),
+            0
+          ) AS average_score,
+
+          COUNT(*) FILTER (
+            WHERE qa.completed_at IS NOT NULL
+              AND qa.score = qa.total_questions
+          )::int AS perfect_attempts,
+
+          COUNT(*) FILTER (
+            WHERE qa.completed_at IS NOT NULL
+              AND qa.total_questions > 0
+              AND qa.score >= CEIL(qa.total_questions * 0.6)
+          )::int AS passed_attempts
+
+        FROM quiz_attempts qa
+        GROUP BY qa.quiz_set_id
+      ),
+      answer_stats AS (
+        SELECT
+          qa.quiz_set_id,
+          COUNT(qans.id)::int AS total_answers,
+          COUNT(qans.id) FILTER (
+            WHERE qans.is_correct = TRUE
+          )::int AS correct_answers
+        FROM quiz_attempts qa
+
+        LEFT JOIN quiz_answers qans
+          ON qans.attempt_id = qa.id
+
+        GROUP BY qa.quiz_set_id
+      )
       SELECT
         qs.id,
         qs.title,
@@ -897,214 +1154,107 @@ exports.getQuizDashboard = async (req, res) => {
         qs.description,
         qs.is_active,
         qs.created_at,
-
         qs.plant_id,
 
         p.common_name AS plant_common_name,
         p.botanical_name AS plant_botanical_name,
 
-        COUNT(DISTINCT qa.id)::int AS attempts,
+        COALESCE(ast.attempts, 0)::int AS attempts,
+        COALESCE(ast.completed_attempts, 0)::int
+          AS completed_attempts,
+        COALESCE(ast.unique_users, 0)::int AS unique_users,
 
-        COUNT(DISTINCT CASE
-          WHEN qa.completed_at IS NOT NULL
-          THEN qa.id
-        END)::int AS completed_attempts,
+        COALESCE(ans.total_answers, 0)::int AS total_answers,
+        COALESCE(ans.correct_answers, 0)::int AS correct_answers,
 
-        COUNT(DISTINCT qa.user_id)::int AS unique_users,
-
-        COUNT(qans.id)::int AS total_answers,
-
-        COUNT(CASE
-          WHEN qans.is_correct = TRUE
-          THEN 1
-        END)::int AS correct_answers,
-
-        ROUND(
-          COALESCE(
-            AVG(
-              CASE
-                WHEN qa.completed_at IS NOT NULL
-                THEN qa.score
-              END
-            ),
-            0
-          ),
-          2
-        ) AS average_score,
-
-        COUNT(DISTINCT CASE
-          WHEN qa.completed_at IS NOT NULL
-            AND qa.score = qa.total_questions
-          THEN qa.id
-        END)::int AS perfect_attempts,
-
-        COUNT(DISTINCT CASE
-          WHEN qa.completed_at IS NOT NULL
-            AND qa.total_questions > 0
-            AND qa.score >= CEIL(qa.total_questions * 0.6)
-          THEN qa.id
-        END)::int AS passed_attempts
+        COALESCE(ast.average_score, 0) AS average_score,
+        COALESCE(ast.perfect_attempts, 0)::int AS perfect_attempts,
+        COALESCE(ast.passed_attempts, 0)::int AS passed_attempts
 
       FROM quiz_sets qs
 
       LEFT JOIN plants p
         ON qs.plant_id = p.id
 
-      LEFT JOIN quiz_attempts qa
-        ON qa.quiz_set_id = qs.id
+      LEFT JOIN attempt_stats ast
+        ON ast.quiz_set_id = qs.id
 
-      LEFT JOIN quiz_answers qans
-        ON qans.attempt_id = qa.id
+      LEFT JOIN answer_stats ans
+        ON ans.quiz_set_id = qs.id
 
-      GROUP BY
-        qs.id,
-        qs.title,
-        qs.quiz_type,
-        qs.question_count,
-        qs.description,
-        qs.is_active,
-        qs.created_at,
-        qs.plant_id,
-        p.common_name,
-        p.botanical_name
+      WHERE qs.quiz_type IN ('general', 'plant_specific')
 
-      ORDER BY attempts DESC, qs.title ASC
+      ORDER BY
+        COALESCE(ast.attempts, 0) DESC,
+        qs.title ASC
     `);
 
-    const quizzes = quizzesResult.rows.map((row) => ({
-      id: row.id,
+    const quizzes = quizzesResult.rows.map((row) => {
+      const answers = Number(row.total_answers);
+      const correct = Number(row.correct_answers);
+      const completed = Number(row.completed_attempts);
 
-      title: row.title,
+      return {
+        id: row.id,
+        title: row.title,
+        quiz_type: row.quiz_type,
+        question_count: Number(row.question_count),
+        description: row.description,
+        is_active: row.is_active,
+        created_at: row.created_at,
 
-      quiz_type: row.quiz_type,
+        plant:
+          row.quiz_type === "plant_specific" && row.plant_id
+            ? {
+                id: row.plant_id,
+                common_name: row.plant_common_name,
+                botanical_name: row.plant_botanical_name,
+              }
+            : null,
 
-      question_count: Number(row.question_count),
+        attempts: Number(row.attempts),
+        completed_attempts: completed,
+        unique_users: Number(row.unique_users),
 
-      description: row.description,
+        total_answers: answers,
+        correct_answers: correct,
 
-      is_active: row.is_active,
+        accuracy:
+          completed > 0
+            ? Number(
+                (
+                  (Number(row.average_score) /
+                    Number(row.question_count)) *
+                  100
+                ).toFixed(1)
+              )
+            : 0,
 
-      created_at: row.created_at,
+        answer_accuracy:
+          answers > 0
+            ? Number(((correct / answers) * 100).toFixed(1))
+            : 0,
 
-      plant:
-        row.quiz_type === "plant_specific" && row.plant_id
-          ? {
-              id: row.plant_id,
-              common_name: row.plant_common_name,
-              botanical_name: row.plant_botanical_name,
-            }
-          : null,
+        average_score: Number(
+          Number(row.average_score).toFixed(2)
+        ),
 
-      attempts: Number(row.attempts),
+        pass_rate:
+          completed > 0
+            ? Number(
+                (
+                  (Number(row.passed_attempts) / completed) *
+                  100
+                ).toFixed(1)
+              )
+            : 0,
 
-      completed_attempts: Number(row.completed_attempts),
-
-      unique_users: Number(row.unique_users),
-
-      total_answers: Number(row.total_answers),
-
-      correct_answers: Number(row.correct_answers),
-
-      accuracy:
-        Number(row.total_answers) > 0
-          ? Number(
-              (
-                (Number(row.correct_answers) /
-                  Number(row.total_answers)) *
-                100
-              ).toFixed(1)
-            )
-          : 0,
-
-      average_score: Number(row.average_score),
-
-      pass_rate:
-        Number(row.completed_attempts) > 0
-          ? Number(
-              (
-                (Number(row.passed_attempts) /
-                  Number(row.completed_attempts)) *
-                100
-              ).toFixed(1)
-            )
-          : 0,
-
-      perfect_attempts: Number(row.perfect_attempts),
-    }));
-
-
-    // Question Performance
-    const questionResult = await pool.query(`
-      SELECT
-        q.id,
-        q.question_text,
-
-        q.plant_id,
-
-        p.common_name AS plant_common_name,
-
-        COUNT(qa.id)::int AS total_answers,
-
-        COUNT(CASE
-          WHEN qa.is_correct = TRUE
-          THEN 1
-        END)::int AS correct_answers,
-
-        COUNT(CASE
-          WHEN qa.is_correct = FALSE
-          THEN 1
-        END)::int AS incorrect_answers
-
-      FROM questions q
-
-      LEFT JOIN quiz_answers qa
-        ON qa.question_id = q.id
-
-      LEFT JOIN plants p
-        ON q.plant_id = p.id
-
-      GROUP BY
-        q.id,
-        q.question_text,
-        q.plant_id,
-        p.common_name
-
-      ORDER BY total_answers DESC
-    `);
-
-    const questions = questionResult.rows.map((row) => ({
-      id: row.id,
-
-      question_text: row.question_text,
-
-      plant:
-        row.plant_id
-          ? {
-              id: row.plant_id,
-              common_name: row.plant_common_name,
-            }
-          : null,
-
-      total_answers: Number(row.total_answers),
-
-      correct_answers: Number(row.correct_answers),
-
-      incorrect_answers: Number(row.incorrect_answers),
-
-      accuracy:
-        Number(row.total_answers) > 0
-          ? Number(
-              (
-                (Number(row.correct_answers) /
-                  Number(row.total_answers)) *
-                100
-              ).toFixed(1)
-            )
-          : 0,
-    }));
+        perfect_attempts: Number(row.perfect_attempts),
+      };
+    });
 
 
-    // Achievement statistics for specific achievement IDs (10, 11, 12, 13)
+    // Achievement Statistics
     const achievementResult = await pool.query(`
       SELECT
         a.id,
@@ -1146,17 +1296,12 @@ exports.getQuizDashboard = async (req, res) => {
 
     const achievements = achievementResult.rows.map((row) => ({
       id: row.id,
-
       achievement_key: row.achievement_key,
-
       name: row.name,
-
       description: row.description,
 
       users_with_progress: Number(row.users_with_progress),
-
       users_unlocked: Number(row.users_unlocked),
-
       total_progress: Number(row.total_progress),
 
       average_progress: Number(
@@ -1218,17 +1363,13 @@ exports.getQuizDashboard = async (req, res) => {
       id: row.id,
 
       user_id: formatUserId(row.user_id),
-
       username: row.username,
 
       quiz_set_id: row.quiz_set_id,
-
       title: row.title,
-
       quiz_type: row.quiz_type,
 
       score: Number(row.score),
-
       total_questions: Number(row.total_questions),
 
       percentage:
@@ -1243,119 +1384,26 @@ exports.getQuizDashboard = async (req, res) => {
           : 0,
 
       is_perfect: row.is_perfect,
-
       is_passed: row.is_passed,
 
       started_at: row.started_at,
-
       completed_at: row.completed_at,
     }));
 
-
-    // Quiz trend - last 28 days
-    const dailyTrendResult = await pool.query(`
-      SELECT
-        day::date AS date,
-
-        COUNT(qa.id)::int AS attempts,
-
-        COUNT(CASE
-          WHEN qa.completed_at IS NOT NULL
-          THEN 1
-        END)::int AS completed_attempts,
-
-        COUNT(DISTINCT qa.user_id)::int AS unique_users
-
-      FROM generate_series(
-        CURRENT_DATE - INTERVAL '27 days',
-        CURRENT_DATE,
-        INTERVAL '1 day'
-      ) AS day
-
-      LEFT JOIN quiz_attempts qa
-        ON qa.started_at >= day
-        AND qa.started_at < day + INTERVAL '1 day'
-
-      GROUP BY day
-
-      ORDER BY day ASC
-    `);
-
-    const dailyTrend = dailyTrendResult.rows.map((row) => ({
-      date: row.date,
-      attempts: Number(row.attempts),
-      completed_attempts: Number(row.completed_attempts),
-      unique_users: Number(row.unique_users),
-    }));
-
-    // response
-    res.json({
-      overview: {
-        total_quizzes: Number(overview.total_quizzes),
-        active_quizzes: Number(overview.active_quizzes),
-
-        total_attempts: Number(overview.total_attempts),
-        completed_attempts: Number(overview.completed_attempts),
-
-        total_answers: Number(overview.total_answers),
-        correct_answers: Number(overview.correct_answers),
-        incorrect_answers: Number(overview.incorrect_answers),
-
-        overall_accuracy: Number(overview.overall_accuracy),
-
-        unique_users: Number(overview.unique_users),
-
-        perfect_attempts: Number(overview.perfect_attempts),
-        passed_attempts: Number(overview.passed_attempts),
-
-        pass_rate:
-          Number(overview.completed_attempts) > 0
-            ? Number(
-                (
-                  (Number(overview.passed_attempts) /
-                    Number(overview.completed_attempts)) *
-                  100
-                ).toFixed(1)
-              )
-            : 0,
-      },
-
+    return res.json({
+      overview,
       categories,
-
       quizzes,
-
-      questions: {
-        total_questions: questions.length,
-
-        most_answered: [...questions]
-          .sort((a, b) => b.total_answers - a.total_answers)
-          .slice(0, 10),
-
-        hardest: [...questions]
-          .filter((q) => q.total_answers > 0)
-          .sort((a, b) => a.accuracy - b.accuracy)
-          .slice(0, 10),
-
-        easiest: [...questions]
-          .filter((q) => q.total_answers > 0)
-          .sort((a, b) => b.accuracy - a.accuracy)
-          .slice(0, 10),
-      },
-
       achievements,
-
       recent_activity: recentActivity,
-
-      trend: {
-        daily: dailyTrend,
-      },
     });
 
   } catch (err) {
     console.error("Quiz dashboard error:", err);
 
-    res.status(500).json({
-      error: err.message,
+    return res.status(500).json({
+      error: "Failed to retrieve quiz dashboard",
+      details: err.message,
     });
   }
 };
