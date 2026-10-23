@@ -126,6 +126,8 @@ exports.login = async (req, res) => {
         id: user.id,
         username: user.username,
         email: user.email,
+        birth_year: user.birth_year,
+        avatar: user.avatar,
       },
     });
 
