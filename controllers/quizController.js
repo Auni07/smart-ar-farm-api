@@ -600,6 +600,50 @@ exports.createARQuizSession = async (req, res) => {
     await client.query("BEGIN");
     transactionStarted = true;
 
+    // Deduct AR Quiz chance and reset if a new day
+    const chanceResult = await client.query(
+      `
+      UPDATE users
+      SET
+        ar_quiz_chance_limit = CASE
+          WHEN ar_quiz_chance_reset_date = CURRENT_DATE
+            THEN ar_quiz_chance_limit - 1
+          ELSE 2
+        END,
+        ar_quiz_chance_reset_date = CURRENT_DATE
+      WHERE id = $1
+        AND (
+          ar_quiz_chance_reset_date IS DISTINCT FROM CURRENT_DATE
+          OR ar_quiz_chance_limit > 0
+        )
+      RETURNING
+        ar_quiz_chance_limit,
+        ar_quiz_chance_reset_date
+      `,
+      [Number(user_id)]
+    );
+
+    if (chanceResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+
+      // Distinguish a missing user from exhausted chances
+      const userExists = await client.query(
+        `SELECT id FROM users WHERE id = $1`,
+        [Number(user_id)]
+      );
+
+      if (userExists.rowCount === 0) {
+        return res.status(404).json({
+          error: "User not found",
+        });
+      }
+
+      return res.status(400).json({
+        error: "No AR Quiz chances remaining today",
+      });
+    }
+
     // 3. Check whether the user exists
     const userResult = await client.query(
       `

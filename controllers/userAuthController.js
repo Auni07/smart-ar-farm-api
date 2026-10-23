@@ -97,7 +97,24 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
+      `SELECT
+        id,
+        username,
+        email,
+        password_hash,
+        birth_year,
+        avatar,
+        watering_chance_limit,
+        TO_CHAR(watering_chance_reset_date::date, 'YYYY-MM-DD')
+          AS watering_chance_reset_date,
+        collect_chance_limit,
+        TO_CHAR(collect_chance_reset_date::date, 'YYYY-MM-DD')
+          AS collect_chance_reset_date,
+        ar_quiz_chance_limit,
+        TO_CHAR(ar_quiz_chance_reset_date::date, 'YYYY-MM-DD')
+          AS ar_quiz_chance_reset_date
+      FROM users
+      WHERE email = $1`,
       [email]
     );
 
@@ -128,12 +145,25 @@ exports.login = async (req, res) => {
         email: user.email,
         birth_year: user.birth_year,
         avatar: user.avatar,
+
+        watering_chance_limit: user.watering_chance_limit,
+        watering_chance_reset_date:
+          user.watering_chance_reset_date,
+
+        collect_chance_limit: user.collect_chance_limit,
+        collect_chance_reset_date:
+          user.collect_chance_reset_date,
+
+        ar_quiz_chance_limit: user.ar_quiz_chance_limit,
+        ar_quiz_chance_reset_date:
+          user.ar_quiz_chance_reset_date,
       },
     });
-
   } catch (err) {
+    console.error("Login error:", err);
+
     res.status(500).json({
-      error: err.message,
+      error: "An error occurred during login",
     });
   }
 };

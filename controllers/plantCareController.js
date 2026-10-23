@@ -109,10 +109,7 @@ exports.addCollection = async (req, res) => {
   const client = await pool.connect();
 
   try {
-    const {
-      user_id,
-      collection_id,
-    } = req.body;
+    const { user_id, collection_id } = req.body;
 
     if (!user_id || !collection_id) {
       return res.status(400).json({
@@ -121,6 +118,36 @@ exports.addCollection = async (req, res) => {
     }
 
     await client.query("BEGIN");
+
+    // Update collection chances
+    const chanceResult = await client.query(
+      `
+      UPDATE users
+      SET
+        collect_chance_limit = CASE
+          WHEN collect_chance_reset_date = CURRENT_DATE
+            THEN collect_chance_limit - 1
+          ELSE 10
+        END,
+        collect_chance_reset_date = CURRENT_DATE
+      WHERE id = $1
+        AND (
+          collect_chance_reset_date IS DISTINCT FROM CURRENT_DATE
+          OR collect_chance_limit > 0
+        )
+      RETURNING collect_chance_limit,
+                collect_chance_reset_date
+      `,
+      [user_id]
+    );
+
+    if (chanceResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(400).json({
+        error: "User not found or no collection chances remaining",
+      });
+    }
 
     // Check that the collection exists
     const collectionCheck = await client.query(
@@ -131,12 +158,8 @@ exports.addCollection = async (req, res) => {
         pc.collection_type,
         p.common_name AS plant_name,
         p.botanical_name
-
       FROM plant_collections pc
-
-      LEFT JOIN plants p
-        ON pc.plant_id = p.id
-
+      LEFT JOIN plants p ON pc.plant_id = p.id
       WHERE pc.id = $1
       `,
       [collection_id]
@@ -162,28 +185,15 @@ exports.addCollection = async (req, res) => {
         first_collected_at,
         last_collected_at
       )
-
-      VALUES (
-        $1,
-        $2,
-        1,
-        NOW(),
-        NOW()
-      )
-
+      VALUES ($1, $2, 1, NOW(), NOW())
       ON CONFLICT (user_id, collection_id)
-
       DO UPDATE SET
         collected_count =
           user_collections.collected_count + 1,
         last_collected_at = NOW()
-
       RETURNING *
       `,
-      [
-        user_id,
-        collection_id,
-      ]
+      [user_id, collection_id]
     );
 
     // Find Plant Collection achievement
@@ -198,7 +208,6 @@ exports.addCollection = async (req, res) => {
     if (achievement.rowCount > 0) {
       const achievementId = achievement.rows[0].id;
 
-      // Increase achievement progress by 1
       await client.query(
         `
         INSERT INTO achievement_progress (
@@ -208,18 +217,13 @@ exports.addCollection = async (req, res) => {
           updated_at
         )
         VALUES ($1, $2, 1, NOW())
-
         ON CONFLICT (user_id, achievement_id)
-
         DO UPDATE SET
           current_value =
             achievement_progress.current_value + 1,
           updated_at = NOW()
         `,
-        [
-          user_id,
-          achievementId,
-        ]
+        [user_id, achievementId]
       );
     }
 
@@ -227,14 +231,18 @@ exports.addCollection = async (req, res) => {
 
     res.status(201).json({
       message: "Collection added successfully",
-
       collection: {
         ...result.rows[0],
-
         plant_id: collection.plant_id,
         collection_type: collection.collection_type,
         plant_name: collection.plant_name,
         botanical_name: collection.botanical_name,
+      },
+      chances: {
+        collect_chance_limit:
+          chanceResult.rows[0].collect_chance_limit,
+        collect_chance_reset_date:
+          chanceResult.rows[0].collect_chance_reset_date,
       },
     });
 
@@ -256,10 +264,7 @@ exports.addWateringRecord = async (req, res) => {
   const client = await pool.connect();
 
   try {
-    const {
-      user_id,
-      plant_id,
-    } = req.body;
+    const { user_id, plant_id } = req.body;
 
     if (!user_id || !plant_id) {
       return res.status(400).json({
@@ -269,6 +274,36 @@ exports.addWateringRecord = async (req, res) => {
 
     await client.query("BEGIN");
 
+    // Update watering chances
+    const chanceResult = await client.query(
+      `
+      UPDATE users
+      SET
+        watering_chance_limit = CASE
+          WHEN watering_chance_reset_date = CURRENT_DATE
+            THEN watering_chance_limit - 1
+          ELSE 5
+        END,
+        watering_chance_reset_date = CURRENT_DATE
+      WHERE id = $1
+        AND (
+          watering_chance_reset_date IS DISTINCT FROM CURRENT_DATE
+          OR watering_chance_limit > 0
+        )
+      RETURNING watering_chance_limit,
+                watering_chance_reset_date
+      `,
+      [user_id]
+    );
+
+    if (chanceResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(400).json({
+        error: "User not found or no watering chances remaining",
+      });
+    }
+
     // Check that the plant exists
     const plantCheck = await client.query(
       `
@@ -277,9 +312,7 @@ exports.addWateringRecord = async (req, res) => {
         common_name,
         botanical_name,
         family_name
-
       FROM plants
-
       WHERE id = $1
       `,
       [plant_id]
@@ -295,7 +328,7 @@ exports.addWateringRecord = async (req, res) => {
 
     const plant = plantCheck.rows[0];
 
-    // Add one watering record
+    // Add watering record
     const result = await client.query(
       `
       INSERT INTO user_watering_records (
@@ -303,19 +336,10 @@ exports.addWateringRecord = async (req, res) => {
         plant_id,
         watered_at
       )
-
-      VALUES (
-        $1,
-        $2,
-        NOW()
-      )
-
+      VALUES ($1, $2, NOW())
       RETURNING *
       `,
-      [
-        user_id,
-        plant_id,
-      ]
+      [user_id, plant_id]
     );
 
     // Find Watering achievement
@@ -330,7 +354,6 @@ exports.addWateringRecord = async (req, res) => {
     if (achievement.rowCount > 0) {
       const achievementId = achievement.rows[0].id;
 
-      // Increase achievement progress by 1
       await client.query(
         `
         INSERT INTO achievement_progress (
@@ -340,18 +363,13 @@ exports.addWateringRecord = async (req, res) => {
           updated_at
         )
         VALUES ($1, $2, 1, NOW())
-
         ON CONFLICT (user_id, achievement_id)
-
         DO UPDATE SET
           current_value =
             achievement_progress.current_value + 1,
           updated_at = NOW()
         `,
-        [
-          user_id,
-          achievementId,
-        ]
+        [user_id, achievementId]
       );
     }
 
@@ -359,13 +377,17 @@ exports.addWateringRecord = async (req, res) => {
 
     res.status(201).json({
       message: "Watering record added successfully",
-
       watering_record: {
         ...result.rows[0],
-
         plant_name: plant.common_name,
         botanical_name: plant.botanical_name,
         family_name: plant.family_name,
+      },
+      chances: {
+        watering_chance_limit:
+          chanceResult.rows[0].watering_chance_limit,
+        watering_chance_reset_date:
+          chanceResult.rows[0].watering_chance_reset_date,
       },
     });
 
