@@ -699,7 +699,7 @@ exports.createARQuizSession = async (req, res) => {
 
     if (plantIds.length === 1) {
       targetQuestionCount = 3;
-    } else if (plantIds.length <= 4) {
+    } else if (plantIds.length <= 3) {
       targetQuestionCount = 5;
     } else {
       targetQuestionCount = 10;
