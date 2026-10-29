@@ -1,4 +1,8 @@
 const pool = require("../config/db");
+const {
+  increaseAchievementProgress,
+  buildAchievementDialog,
+} = require("../utils/achievementHelper");
 
 exports.createActivity = async (req, res) => {
   try {
@@ -367,6 +371,7 @@ exports.createCollectActivity = async (req, res) => {
   }
 };
 
+//  Unique view (with achievement unlock dialog)
 exports.createUniqueView = async (req, res) => {
   const client = await pool.connect();
 
@@ -399,6 +404,7 @@ exports.createUniqueView = async (req, res) => {
       return res.status(200).json({
         message: "Plant already viewed before",
         is_new: false,
+        achievement_dialog: false,
       });
     }
 
@@ -414,41 +420,19 @@ exports.createUniqueView = async (req, res) => {
       [user_id, plant_id]
     );
 
-    // Get Plant Viewing achievement
-    const achievement = await client.query(
-      `
-      SELECT id
-      FROM achievements
-      WHERE achievement_key = 'plant_viewing'
-      `
+    // Increase "Plant Viewing" progress and check for a new level
+    const unlockedLevel = await increaseAchievementProgress(
+      client,
+      user_id,
+      "plant_viewing"
     );
-
-    if (achievement.rows.length > 0) {
-      const achievement_id = achievement.rows[0].id;
-
-      // Increase achievement progress by 1
-      await client.query(
-        `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value
-        )
-        VALUES ($1, $2, 1)
-        ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET
-          current_value = achievement_progress.current_value + 1,
-          updated_at = NOW()
-        `,
-        [user_id, achievement_id]
-      );
-    }
 
     await client.query("COMMIT");
 
     res.status(201).json({
       message: "New unique plant view recorded",
       is_new: true,
+      ...buildAchievementDialog(unlockedLevel),
     });
 
   } catch (err) {
@@ -465,104 +449,7 @@ exports.createUniqueView = async (req, res) => {
   }
 };
 
-exports.createUniqueView = async (req, res) => {
-  const client = await pool.connect();
-
-  try {
-    const { user_id, plant_id } = req.body;
-
-    if (!user_id || !plant_id) {
-      return res.status(400).json({
-        error: "user_id and plant_id are required",
-      });
-    }
-
-    await client.query("BEGIN");
-
-    // Check whether this user has already viewed this plant
-    const existing = await client.query(
-      `
-      SELECT id
-      FROM user_plant_views
-      WHERE user_id = $1
-        AND plant_id = $2
-      `,
-      [user_id, plant_id]
-    );
-
-    // Already viewed before
-    if (existing.rows.length > 0) {
-      await client.query("COMMIT");
-
-      return res.status(200).json({
-        message: "Plant already viewed before",
-        is_new: false,
-      });
-    }
-
-    // New unique plant view
-    await client.query(
-      `
-      INSERT INTO user_plant_views (
-        user_id,
-        plant_id
-      )
-      VALUES ($1, $2)
-      `,
-      [user_id, plant_id]
-    );
-
-    // Get Plant Viewing achievement
-    const achievement = await client.query(
-      `
-      SELECT id
-      FROM achievements
-      WHERE achievement_key = 'plant_viewing'
-      `
-    );
-
-    if (achievement.rows.length > 0) {
-      const achievement_id = achievement.rows[0].id;
-
-      // Increase achievement progress by 1
-      await client.query(
-        `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value
-        )
-        VALUES ($1, $2, 1)
-        ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET
-          current_value = achievement_progress.current_value + 1,
-          updated_at = NOW()
-        `,
-        [user_id, achievement_id]
-      );
-    }
-
-    await client.query("COMMIT");
-
-    res.status(201).json({
-      message: "New unique plant view recorded",
-      is_new: true,
-    });
-
-  } catch (err) {
-    await client.query("ROLLBACK");
-
-    console.error("Create unique view error:", err);
-
-    res.status(500).json({
-      error: err.message,
-    });
-
-  } finally {
-    client.release();
-  }
-};
-
+// Unique scan (with achievement unlock dialog)
 exports.createUniqueScan = async (req, res) => {
   const client = await pool.connect();
 
@@ -595,6 +482,7 @@ exports.createUniqueScan = async (req, res) => {
       return res.status(200).json({
         message: "Plant already scanned before",
         is_new: false,
+        achievement_dialog: false,
       });
     }
 
@@ -610,41 +498,19 @@ exports.createUniqueScan = async (req, res) => {
       [user_id, plant_id]
     );
 
-    // Get Plant Scanning achievement
-    const achievement = await client.query(
-      `
-      SELECT id
-      FROM achievements
-      WHERE achievement_key = 'plant_scanning'
-      `
+    // Increase "Plant Scanning" progress and check for a new level
+    const unlockedLevel = await increaseAchievementProgress(
+      client,
+      user_id,
+      "plant_scanning"
     );
-
-    if (achievement.rows.length > 0) {
-      const achievement_id = achievement.rows[0].id;
-
-      // Increase achievement progress by 1
-      await client.query(
-        `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value
-        )
-        VALUES ($1, $2, 1)
-        ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET
-          current_value = achievement_progress.current_value + 1,
-          updated_at = NOW()
-        `,
-        [user_id, achievement_id]
-      );
-    }
 
     await client.query("COMMIT");
 
     res.status(201).json({
       message: "New unique plant scan recorded",
       is_new: true,
+      ...buildAchievementDialog(unlockedLevel),
     });
 
   } catch (err) {

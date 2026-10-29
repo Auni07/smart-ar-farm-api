@@ -1,4 +1,8 @@
 const pool = require("../config/db");
+const {
+  increaseAchievementProgress,
+  buildAchievementDialog,
+} = require("../utils/achievementHelper");
 
 exports.getUserWateringRecords = async (req, res) => {
   try {
@@ -105,6 +109,7 @@ exports.getUserCollectionRecords = async (req, res) => {
   }
 };
 
+// Collection activity (with achievement unlock dialog)
 exports.addCollection = async (req, res) => {
   const client = await pool.connect();
 
@@ -196,36 +201,12 @@ exports.addCollection = async (req, res) => {
       [user_id, collection_id]
     );
 
-    // Find Plant Collection achievement
-    const achievement = await client.query(
-      `
-      SELECT id
-      FROM achievements
-      WHERE achievement_key = 'plant_collection'
-      `
+    // Increase "Plant Collection" progress and check for a new level
+    const unlockedLevel = await increaseAchievementProgress(
+      client,
+      user_id,
+      "plant_collection"
     );
-
-    if (achievement.rowCount > 0) {
-      const achievementId = achievement.rows[0].id;
-
-      await client.query(
-        `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value,
-          updated_at
-        )
-        VALUES ($1, $2, 1, NOW())
-        ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET
-          current_value =
-            achievement_progress.current_value + 1,
-          updated_at = NOW()
-        `,
-        [user_id, achievementId]
-      );
-    }
 
     await client.query("COMMIT");
 
@@ -244,6 +225,7 @@ exports.addCollection = async (req, res) => {
         collect_chance_reset_date:
           chanceResult.rows[0].collect_chance_reset_date,
       },
+      ...buildAchievementDialog(unlockedLevel),
     });
 
   } catch (err) {
@@ -260,6 +242,7 @@ exports.addCollection = async (req, res) => {
   }
 };
 
+// Water activity (with achievement unlock dialog)
 exports.addWateringRecord = async (req, res) => {
   const client = await pool.connect();
 
@@ -342,36 +325,12 @@ exports.addWateringRecord = async (req, res) => {
       [user_id, plant_id]
     );
 
-    // Find Watering achievement
-    const achievement = await client.query(
-      `
-      SELECT id
-      FROM achievements
-      WHERE achievement_key = 'watering'
-      `
+    // Increase "Watering" progress and check for a new level
+    const unlockedLevel = await increaseAchievementProgress(
+      client,
+      user_id,
+      "watering"
     );
-
-    if (achievement.rowCount > 0) {
-      const achievementId = achievement.rows[0].id;
-
-      await client.query(
-        `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value,
-          updated_at
-        )
-        VALUES ($1, $2, 1, NOW())
-        ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET
-          current_value =
-            achievement_progress.current_value + 1,
-          updated_at = NOW()
-        `,
-        [user_id, achievementId]
-      );
-    }
 
     await client.query("COMMIT");
 
@@ -389,6 +348,7 @@ exports.addWateringRecord = async (req, res) => {
         watering_chance_reset_date:
           chanceResult.rows[0].watering_chance_reset_date,
       },
+      ...buildAchievementDialog(unlockedLevel),
     });
 
   } catch (err) {

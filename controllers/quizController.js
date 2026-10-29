@@ -1,5 +1,8 @@
-
 const pool = require("../config/db");
+const {
+  setAchievementProgress,
+  buildAchievementDialog,
+} = require("../utils/achievementHelper");
 
 exports.getQuizSets = async (req, res) => {
   try {
@@ -231,7 +234,7 @@ exports.getAllQuizSets = async (req, res) => {
       });
     });
 
-    
+
     // Get the user's AR quiz sessions and latest attempt
     const arResult = await pool.query(
       `
@@ -1047,80 +1050,63 @@ exports.submitQuizAttempt = async (req, res) => {
       }
     }
 
+    // Collect every level unlocked by this submission
+    const unlockedLevels = [];
+
     // 5. Update General Quiz Achievement (ID 10)
     if (quizType === "general") {
-      await client.query(
+      const generalCount = await client.query(
         `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value,
-          updated_at
-        )
-        SELECT
-          $1,
-          10,
-          COUNT(*),
-          NOW()
+        SELECT COUNT(*)::INT AS value
         FROM quiz_attempts qa
         JOIN quiz_sets qs ON qs.id = qa.quiz_set_id
         WHERE qa.user_id = $1
           AND qs.quiz_type = 'general'
           AND qa.completed_at IS NOT NULL
-        ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET
-          current_value = EXCLUDED.current_value,
-          updated_at = NOW()
         `,
         [userId]
       );
+
+      const level = await setAchievementProgress(
+        client,
+        userId,
+        10,
+        generalCount.rows[0].value
+      );
+
+      if (level) unlockedLevels.push(level);
     }
 
     // 6. Update Plant-Specific Quiz Achievement (ID 12)
     if (quizType === "plant_specific") {
-      await client.query(
+      const plantCount = await client.query(
         `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value,
-          updated_at
-        )
-        SELECT
-          $1,
-          12,
-          COUNT(DISTINCT qs.plant_id),
-          NOW()
+        SELECT COUNT(DISTINCT qs.plant_id)::INT AS value
         FROM quiz_attempts qa
         JOIN quiz_sets qs ON qs.id = qa.quiz_set_id
         WHERE qa.user_id = $1
           AND qs.quiz_type = 'plant_specific'
           AND qs.plant_id IS NOT NULL
           AND qa.completed_at IS NOT NULL
-        ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET
-          current_value = EXCLUDED.current_value,
-          updated_at = NOW()
         `,
         [userId]
       );
+
+      const level = await setAchievementProgress(
+        client,
+        userId,
+        12,
+        plantCount.rows[0].value
+      );
+
+      if (level) unlockedLevels.push(level);
     }
 
     // 7. Update AR Experience Quiz Achievement (ID 13)
     if (quizType === "ar_experience") {
-      await client.query(
+      const arCount = await client.query(
         `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value,
-          updated_at
-        )
-        SELECT
-          $1,
-          13,
-          COUNT(*),
-          NOW()
+        SELECT COUNT(*)::INT AS value
         FROM quiz_attempts qa
         JOIN quiz_sets qs ON qs.id = qa.quiz_set_id
         WHERE qa.user_id = $1
@@ -1128,18 +1114,28 @@ exports.submitQuizAttempt = async (req, res) => {
           AND qa.completed_at IS NOT NULL
           AND qa.total_questions > 0
           AND qa.score::FLOAT / qa.total_questions >= 0.6
-        ON CONFLICT (user_id, achievement_id)
-        DO UPDATE SET
-          current_value = EXCLUDED.current_value,
-          updated_at = NOW()
         `,
         [userId]
       );
+
+      const level = await setAchievementProgress(
+        client,
+        userId,
+        13,
+        arCount.rows[0].value
+      );
+
+      if (level) unlockedLevels.push(level);
     }
 
     // 8. Update Perfect Score Achievement (ID 11)
     // Counts perfect scores from regular quizzes AND AR quizzes.
-    await updatePerfectScoreAchievement(client, userId);
+    const perfectLevel = await updatePerfectScoreAchievement(
+      client,
+      userId
+    );
+
+    if (perfectLevel) unlockedLevels.push(perfectLevel);
 
     await client.query("COMMIT");
     transactionStarted = false;
@@ -1163,6 +1159,8 @@ exports.submitQuizAttempt = async (req, res) => {
         total_questions: savedTotal,
         is_perfect: savedScore === savedTotal,
       },
+
+      ...buildAchievementDialog(unlockedLevels),
     });
   } catch (err) {
     if (transactionStarted) {
@@ -1378,37 +1376,40 @@ exports.submitARQuizAttempt = async (req, res) => {
       action = "not_updated";
     }
 
+    // Collect every level unlocked by this submission
+    const unlockedLevels = [];
+
     // 6. Update AR Experience Quiz Achievement (ID 13).
     // A session qualifies if its saved score reaches 60%.
-    await client.query(
+    const arCount = await client.query(
       `
-      INSERT INTO achievement_progress (
-        user_id,
-        achievement_id,
-        current_value,
-        updated_at
-      )
-      SELECT
-        $1,
-        13,
-        COUNT(*),
-        NOW()
+      SELECT COUNT(*)::INT AS value
       FROM ar_quiz_attempts
       WHERE user_id = $1
         AND completed_at IS NOT NULL
         AND total_questions > 0
         AND score::FLOAT / total_questions >= 0.6
-      ON CONFLICT (user_id, achievement_id)
-      DO UPDATE SET
-        current_value = EXCLUDED.current_value,
-        updated_at = NOW()
       `,
       [userId]
     );
 
+    const arLevel = await setAchievementProgress(
+      client,
+      userId,
+      13,
+      arCount.rows[0].value
+    );
+
+    if (arLevel) unlockedLevels.push(arLevel);
+
     // 7. Update Perfect Score Achievement (ID 11).
     // Include regular quizzes and AR quizzes.
-    await updatePerfectScoreAchievement(client, userId);
+    const perfectLevel = await updatePerfectScoreAchievement(
+      client,
+      userId
+    );
+
+    if (perfectLevel) unlockedLevels.push(perfectLevel);
 
     await client.query("COMMIT");
     transactionStarted = false;
@@ -1433,6 +1434,8 @@ exports.submitARQuizAttempt = async (req, res) => {
         is_perfect:
           Number(attempt.score) === Number(attempt.total_questions),
       },
+
+      ...buildAchievementDialog(unlockedLevels),
     });
   } catch (err) {
     if (transactionStarted) {
@@ -1453,18 +1456,12 @@ exports.submitARQuizAttempt = async (req, res) => {
   }
 };
 
+// Recalculates the Perfect Score achievement (ID 11)
+// and returns the newly unlocked level, if any.
 async function updatePerfectScoreAchievement(client, userId) {
-  await client.query(
+  const perfectCount = await client.query(
     `
-    INSERT INTO achievement_progress (
-      user_id,
-      achievement_id,
-      current_value,
-      updated_at
-    )
     SELECT
-      $1,
-      11,
       (
         SELECT COUNT(*)
         FROM quiz_attempts qa
@@ -1481,13 +1478,15 @@ async function updatePerfectScoreAchievement(client, userId) {
           AND ara.completed_at IS NOT NULL
           AND ara.total_questions > 0
           AND ara.score = ara.total_questions
-      ),
-      NOW()
-    ON CONFLICT (user_id, achievement_id)
-    DO UPDATE SET
-      current_value = EXCLUDED.current_value,
-      updated_at = NOW()
+      ) AS value
     `,
     [Number(userId)]
+  );
+
+  return setAchievementProgress(
+    client,
+    Number(userId),
+    11,
+    Number(perfectCount.rows[0].value)
   );
 }

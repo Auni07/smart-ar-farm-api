@@ -1,5 +1,8 @@
-
 const pool = require("../config/db");
+const {
+  setAchievementProgress,
+  buildAchievementDialog,
+} = require("../utils/achievementHelper");
 
 exports.visitMapLocation = async (req, res) => {
   const client = await pool.connect();
@@ -93,38 +96,41 @@ exports.visitMapLocation = async (req, res) => {
 
     const isNewVisit = visitResult.rowCount > 0;
 
+    // Level unlocked by this visit (if any)
+    let unlockedLevel = null;
+
     // update achievement progress for farm locations if it's a new visit
     if (isNewVisit) {
-      await client.query(
+      // Find the Farm Locations achievement
+      const achievementKeyResult = await client.query(
         `
-        INSERT INTO achievement_progress (
-          user_id,
-          achievement_id,
-          current_value,
-          updated_at
-        )
-        SELECT
-          $1,
-          a.id,
-          COUNT(umv.map_id),
-          NOW()
-        FROM achievements a
-
-        LEFT JOIN user_map_visit umv
-          ON umv.user_id = $1
-
-        WHERE a.achievement_key = 'farm_locations'
-
-        GROUP BY a.id
-
-        ON CONFLICT (user_id, achievement_id)
-
-        DO UPDATE SET
-          current_value = EXCLUDED.current_value,
-          updated_at = NOW()
-        `,
-        [user_id]
+        SELECT id
+        FROM achievements
+        WHERE achievement_key = 'farm_locations'
+        `
       );
+
+      if (achievementKeyResult.rowCount > 0) {
+        const achievementId = achievementKeyResult.rows[0].id;
+
+        // Count the user's unique visited locations
+        const visitCount = await client.query(
+          `
+          SELECT COUNT(*)::INT AS value
+          FROM user_map_visit
+          WHERE user_id = $1
+          `,
+          [user_id]
+        );
+
+        // Save progress and detect a newly unlocked level
+        unlockedLevel = await setAchievementProgress(
+          client,
+          Number(user_id),
+          achievementId,
+          visitCount.rows[0].value
+        );
+      }
     }
 
     // get current achievement progress for farm locations
@@ -179,6 +185,8 @@ exports.visitMapLocation = async (req, res) => {
             current_value: Number(achievement.current_value),
           }
         : null,
+
+      ...buildAchievementDialog(unlockedLevel),
     });
 
   } catch (err) {
