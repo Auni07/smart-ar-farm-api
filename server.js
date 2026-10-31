@@ -37,6 +37,10 @@ app.get("/reset-password", (req, res) => {
     res.sendFile(path.join(__dirname, "public", "reset-password.html"));
 });
 
+app.get("/loaderio-f096fa1a4aec7994dcc962fd3dbba0f6", (req, res) => {
+    res.send("loaderio-f096fa1a4aec7994dcc962fd3dbba0f6");
+});
+
 app.use("/auth", authRoutes);
 app.use("/admin", adminAuthRoutes);
 app.use("/admin/dashboard", adminDashboardRoutes);
