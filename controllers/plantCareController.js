@@ -266,7 +266,7 @@ exports.addWateringRecord = async (req, res) => {
         watering_chance_limit = CASE
           WHEN watering_chance_reset_date = CURRENT_DATE
             THEN watering_chance_limit - 1
-          ELSE 5
+          ELSE 4
         END,
         watering_chance_reset_date = CURRENT_DATE
       WHERE id = $1
