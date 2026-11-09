@@ -125,34 +125,35 @@ exports.addCollection = async (req, res) => {
     await client.query("BEGIN");
 
     // Update collection chances
-    const chanceResult = await client.query(
-      `
-      UPDATE users
-      SET
-        collect_chance_limit = CASE
-          WHEN collect_chance_reset_date = CURRENT_DATE
-            THEN collect_chance_limit - 1
-          ELSE 10
-        END,
-        collect_chance_reset_date = CURRENT_DATE
-      WHERE id = $1
-        AND (
-          collect_chance_reset_date IS DISTINCT FROM CURRENT_DATE
-          OR collect_chance_limit > 0
-        )
-      RETURNING collect_chance_limit,
-                collect_chance_reset_date
-      `,
-      [user_id]
-    );
+    // Collection limit is disabled for now.
+    // const chanceResult = await client.query(
+    //   `
+    //   UPDATE users
+    //   SET
+    //     collect_chance_limit = CASE
+    //       WHEN collect_chance_reset_date = CURRENT_DATE
+    //         THEN collect_chance_limit - 1
+    //       ELSE 10
+    //     END,
+    //     collect_chance_reset_date = CURRENT_DATE
+    //   WHERE id = $1
+    //     AND (
+    //       collect_chance_reset_date IS DISTINCT FROM CURRENT_DATE
+    //       OR collect_chance_limit > 0
+    //     )
+    //   RETURNING collect_chance_limit,
+    //             collect_chance_reset_date
+    //   `,
+    //   [user_id]
+    // );
 
-    if (chanceResult.rowCount === 0) {
-      await client.query("ROLLBACK");
+    // if (chanceResult.rowCount === 0) {
+    //   await client.query("ROLLBACK");
 
-      return res.status(400).json({
-        error: "User not found or no collection chances remaining",
-      });
-    }
+    //   return res.status(400).json({
+    //     error: "User not found or no collection chances remaining",
+    //   });
+    // }
 
     // Check that the collection exists
     const collectionCheck = await client.query(
@@ -219,12 +220,12 @@ exports.addCollection = async (req, res) => {
         plant_name: collection.plant_name,
         botanical_name: collection.botanical_name,
       },
-      chances: {
-        collect_chance_limit:
-          chanceResult.rows[0].collect_chance_limit,
-        collect_chance_reset_date:
-          chanceResult.rows[0].collect_chance_reset_date,
-      },
+      // chances: {
+      //   collect_chance_limit:
+      //     chanceResult.rows[0].collect_chance_limit,
+      //   collect_chance_reset_date:
+      //     chanceResult.rows[0].collect_chance_reset_date,
+      // },
       ...buildAchievementDialog(unlockedLevel),
     });
 

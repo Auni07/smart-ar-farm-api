@@ -219,6 +219,73 @@ exports.getCompleteDashboard = async (req, res) => {
       LIMIT 10
     `);
 
+    const achievementResult = await pool.query(`
+      SELECT
+        a.id,
+        a.achievement_key,
+        a.name,
+        a.description,
+
+        COALESCE(ap.users_with_progress, 0)::int AS users_with_progress,
+        COALESCE(ap.users_unlocked, 0)::int AS users_unlocked,
+        COALESCE(ap.total_progress, 0)::int AS total_progress,
+        COALESCE(ap.average_progress, 0) AS average_progress,
+
+        COALESCE(al.level_count, 0)::int AS level_count
+
+      FROM achievements a
+
+      LEFT JOIN (
+        SELECT
+          ap.achievement_id,
+          COUNT(DISTINCT ap.user_id)::int AS users_with_progress,
+
+          COUNT(DISTINCT CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM achievement_levels al
+              WHERE al.achievement_id = ap.achievement_id
+                AND ap.current_value >= al.target_value
+            )
+            THEN ap.user_id
+          END)::int AS users_unlocked,
+
+          COALESCE(SUM(ap.current_value), 0)::int AS total_progress,
+
+          COALESCE(AVG(ap.current_value), 0) AS average_progress
+
+        FROM achievement_progress ap
+        GROUP BY ap.achievement_id
+      ) ap ON ap.achievement_id = a.id
+
+      LEFT JOIN (
+        SELECT
+          achievement_id,
+          COUNT(*)::int AS level_count
+        FROM achievement_levels
+        GROUP BY achievement_id
+      ) al ON al.achievement_id = a.id
+
+      ORDER BY a.id ASC
+    `);
+
+    const achievements = achievementResult.rows.map((row) => ({
+      id: row.id,
+      achievement_key: row.achievement_key,
+      name: row.name,
+      description: row.description,
+
+      users_with_progress: Number(row.users_with_progress),
+      users_unlocked: Number(row.users_unlocked),
+      total_progress: Number(row.total_progress),
+
+      average_progress: Number(
+        Number(row.average_progress).toFixed(2)
+      ),
+
+      level_count: Number(row.level_count),
+    }));
+
     // latest 20 activities
     const activitiesQuery = await pool.query(`
       SELECT
@@ -281,6 +348,8 @@ exports.getCompleteDashboard = async (req, res) => {
         weekly: weeklyQuery.rows,
         monthly: monthlyQuery.rows,
       },
+
+      achievements: achievements,
 
       top_plants: {
         scanned: scannedQuery.rows,
