@@ -1,5 +1,22 @@
 const axios = require("axios");
 
+exports.checkConnection = async (req, res) => {
+    try {
+        return res.status(200).json({
+            success: true,
+            online: true,
+            message: "AgroGuide Chat API is online."
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            online: false,
+            message: "AgroGuide Chat API is unavailable."
+        });
+    }
+};
+
 exports.chat = async (req, res) => {
   try {
     const { message, chat_history } = req.body;
