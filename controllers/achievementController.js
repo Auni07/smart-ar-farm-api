@@ -416,7 +416,7 @@ exports.getCompleteBadge = async (req, res) => {
         a.id AS achievement_id,
         a.achievement_key,
         a.name,
-        a.description,
+        al.description AS description,
         a.icon,
         a.category,
 
@@ -472,6 +472,7 @@ exports.getCompleteBadge = async (req, res) => {
         achievement_id: row.achievement_id,
         achievement_key: row.achievement_key,
         name: row.name,
+        description: row.description,
         level_id: row.level_id,
         level_number: row.level_number,
         level_name: row.level_name,
